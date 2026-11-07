@@ -1,0 +1,58 @@
+name: Build Warzone 2100 Android
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Kosongkan ruang disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost /opt/hostedtoolcache/CodeQL || true
+          df -h /
+
+      - name: Ambil source Warzone 2100 untuk Android
+        run: |
+          git clone --depth 1 --recurse-submodules --shallow-submodules \
+            https://github.com/kjenney/warzone2100-android.git src
+          echo "=== docker/android ==="
+          ls -la src/docker/android || true
+          echo "=== build-apk.sh ==="
+          cat src/docker/android/build-apk.sh || true
+
+      - name: Build APK (bisa sangat lama)
+        working-directory: src
+        run: |
+          chmod +x docker/android/build-apk.sh
+          ./docker/android/build-apk.sh 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+
+      - name: Cari APK
+        run: find src -name '*.apk' -print
+
+      - name: Tanda tangani APK
+        run: |
+          APK=$(find src -name '*.apk' | head -1)
+          if [ -z "$APK" ]; then echo "APK tidak ditemukan"; exit 1; fi
+          BT=$(ls -d /usr/local/lib/android/sdk/build-tools/* | sort -V | tail -1)
+          "$BT/zipalign" -f -p 4 "$APK" aligned.apk
+          "$BT/apksigner" sign --ks wz.jks --ks-pass pass:wz2100pass --key-pass pass:wz2100pass \
+            --out Warzone2100-signed.apk aligned.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Warzone2100-APK
+          path: Warzone2100-signed.apk
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-log
+          path: build.log
+          if-no-files-found: ignore
